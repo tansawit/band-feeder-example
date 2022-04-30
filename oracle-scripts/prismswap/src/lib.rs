@@ -17,8 +17,10 @@ struct Output {
     rates: Vec<u64>,
 }
 
+// number of data sources to use in the oracle script
 const EXCHANGE_COUNT: u64 = 1;
 
+// Enum of supported assets
 #[derive(Display, EnumString, EnumIter, PartialEq, Debug, Copy, Clone)]
 #[allow(clippy::upper_case_acronyms)]
 enum Token {
@@ -28,10 +30,12 @@ enum Token {
     YLUNA,
 }
 
+// enum of different data soruces to use in the oracle script
 #[derive(Display, EnumString, EnumIter, EnumPropertyTrait, Debug, Copy, Clone, PartialEq)]
 enum Exchange {
-    #[strum(props(data_source_id = "298"))]
-    Astroport = 0,
+    // data_source_id = previously deployed data source ID
+    #[strum(props(data_source_id = "300"))]
+    PrismSwap = 0,
 }
 
 impl Exchange {
@@ -40,6 +44,8 @@ impl Exchange {
     }
 }
 
+// map that sees which exchange support which asset prices
+// not really used in this example
 macro_rules! token_to_exchange_list {
     ($data:expr) => {
         match $data {

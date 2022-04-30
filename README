@@ -1,0 +1,357 @@
+# Creating Band Oracles (TESTNET)
+
+- [Creating Band Oracles (TESTNET)](#creating-band-oracles-testnet)
+  - [Introduction](#introduction)
+  - [Requirements](#requirements)
+  - [Steps](#steps)
+    - [Setup](#setup)
+      - [Install Golang](#install-golang)
+      - [Install Rust](#install-rust)
+      - [Install BandChain Daemon](#install-bandchain-daemon)
+      - [Create a BandChain Wallet](#create-a-bandchain-wallet)
+    - [Create and Deploy Data Source](#create-and-deploy-data-source)
+    - [Create and Deploy Oracle Script](#create-and-deploy-oracle-script)
+      - [Creating and Oracle Script](#creating-and-oracle-script)
+        - [Schema](#schema)
+        - [Prepration Phase](#prepration-phase)
+        - [Execution Phase](#execution-phase)
+      - [Deploying Oracle Scripts](#deploying-oracle-scripts)
+
+## Introduction
+
+To implement your own oracle using Band, you need 4 components:
+
+1) Data Source: A script to query and calculate the data you're looking to use [(ref)](https://docs.bandchain.org/custom-script/data-source/introduction.html)
+2) Oracle Script: A script to aggregate the results from multiple data sources into a final result [(ref)](https://docs.bandchain.org/custom-script/oracle-script/introduction.html)
+3) Requester: A process to query data from BandChain through the Oracle Script
+4) Relayer: A process to relay the final result from the BandChain request to the destination chain/contract!
+
+![](https://i.imgur.com/kwSc07T.png)
+
+## Requirements
+
+- Go v1.16+: https://go.dev/doc/install
+- BandChain daemon `bandd`: https://github.com/bandprotocol/chain
+
+## Steps
+
+### Setup
+
+#### Install Golang
+
+Follow instructions from the [Go Official Website](https://go.dev/doc/install)
+
+#### Install Rust
+
+Install the base Rust toolchain by following the guide here: https://www.rust-lang.org/tools/install
+
+Once the toolchain is installed, further install the `wasm32-unknown-unknown` target by calling 
+
+```
+rustup target add wasm32-unknown-unknown
+```
+
+on the command line
+
+#### Install BandChain Daemon
+
+```shell=
+git clone https://github.com/bandprotocol/chain
+cd chain && git checkout v2.3.0
+make install
+```
+
+#### Create a BandChain Wallet
+
+1. Create a BandChain wallet using the `bandd` daemon
+
+Save the mnemonic somewhere safe
+
+```shell=
+bandd keys add <INSERT_WALLET_NAME>
+
+
+- name: band_oracle_demo
+  type: local
+  address: band1atlvlj6t2xv5frt8z7s6lw9ygar4zf2jm4vhgq
+  pubkey: '{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"Ao4zHR8xiNGJORc/7q7ThbmCBBEhPDA60XXhfvnrafdD"}'
+  mnemonic: ""
+
+
+**Important** write this mnemonic phrase in a safe place.
+It is the only way to recover your account if you ever forget your password.
+
+cotton can produce people legend burger leader black ladder spread family cute decrease vital normal hidden inch pig envelope multiply grace rescue energy bunker
+```
+
+2. Get some testnet funds
+
+- Navigate to the BandChain testnet block explorer (https://laozi-testnet4.cosmoscan.io)
+![](https://i.imgur.com/azxc9ZD.png)
+
+- Click on **Connect Wallet** and enter your mnemonic from the previous step and click **Connect**
+![](https://i.imgur.com/za7DgqS.png)
+
+- Click on the user icon on the top-right corner and click **Get 10 Testnet BAND**
+![](https://i.imgur.com/wf60G2d.png)
+
+### Create and Deploy Data Source
+
+Next we will create and deploy our data source. In this example, we'll be using an example of creating and oracle that returns the price of Prism assets from PrismSwap AMM.
+
+**See [here](https://github.com/tansawit/band-feeder-example/blob/master/data-sources/prismswap.py) for the example data source implementation.**
+
+A data source is simply a (currently only) Python script that queries the necessary endpoints/APIs, do any required calculations, and **prints** out the desired (as oppose to return) result.
+
+To deploy run the following command
+
+```shell=
+bandd tx oracle create-data-source \
+    --name "Prismswap Pool Price" \
+    --description "Spot price from the Prismswap AMM on Terra" \
+    --fee 0uband \
+    --script <PATH_TO_DATA_SOURCE_SCRIPT> \
+    --from band_oracle_demo \
+    --owner band1atlvlj6t2xv5frt8z7s6lw9ygar4zf2jm4vhgq \
+    --treasury band1atlvlj6t2xv5frt8z7s6lw9ygar4zf2jm4vhgq \
+    --node http://rpc-laozi-testnet4.bandchain.org:26657 \
+    --chain-id band-laozi-testnet4 \
+    --gas 1000000
+```
+
+The variables are:
+
+- name: Desired name of the data source on BandChain
+- description: Short description of the data source
+- fee: Can be ignored and set as "0uband" for this specific case. See [here](https://docs.bandchain.org/whitepaper/on-chain-payment-protocol.html) for more details
+- script: path to the data source script to be deployed
+- owner: Address of the owner of the data source. This address will be able to make changes and update the script once deployed
+- treasury: Again, can be ignored and set to the owner address in this case
+- node: BandChain RPC node to send the data source creation script to
+
+```shell=
+confirm transaction before signing and broadcasting [y/N]: y
+code: 0
+codespace: ""
+data: ""
+gas_used: "0"
+gas_wanted: "0"
+height: "0"
+info: ""
+logs: []
+raw_log: '[]'
+timestamp: ""
+tx: null
+txhash: 4DB5D92EB6B58D951D233F085D8ABD517C89DD59A49D5774B1167F59E553397A
+```
+
+Once you've confirmed the transaction, you'll get back the transaction's `txhash`. Copy that and use that query on https://laozi-testnet4.cosmoscan.io and find the deployed data source's ID. Take note of that as we'd need to use it when creating our oracle script.
+
+![](https://i.imgur.com/MkrpLUq.png)
+
+If you then click on #D300 you'll be taken to the data source page. If you then select the **Test Execution** tab you can test out the data source with different inputs to see if the script works and if the results are what's expected
+![](https://i.imgur.com/SiDkZeT.png)
+
+### Create and Deploy Oracle Script
+
+Now that we have the data source, we can proceed to implement and deploy the oracle script.
+
+**See [here](https://github.com/tansawit/band-feeder-example/blob/master/oracle-scripts/prismswap/src/lib.rs) for the example oracle script implementation.**
+
+#### Creating and Oracle Script
+
+The oracle script generally consist of 3 main parts:
+
+1) Defining the oracle script's schema
+2) The preparation phase implementation
+3) The aggregation phase implementation
+
+Details on what the schema and the preparation/aggregation phases are can be found in Band's [documentation](https://docs.bandchain.org/whitepaper/system-overview.html#oracle-scripts).
+
+##### Schema
+
+The schema defines the types and names of the oracle script's inputs and outputs. This is similar to method signature and response types in smart contracts.
+
+```rust=
+#[derive(OBIDecode, OBISchema)]
+struct Input {
+    symbols: Vec<String>,
+    multiplier: u64,
+}
+
+#[derive(OBIEncode, OBISchema)]
+struct Output {
+    rates: Vec<u64>,
+}
+```
+
+In our case, the oracle script takes two inputs, a string vector `symbols` and a `multiplier` number. It then returns a vector of the output prices, labelled `rates`.
+
+*The multiplier number is used to preserve precision when the returned value is expected to be less than 1, as oracle scripts only support integer return types.*
+
+##### Prepration Phase
+
+The implementation of the preparation phase is defined in the `prepare_impl` function, taking in the oracle script's input as argument.
+
+```rust=
+#[no_mangle]
+fn prepare_impl(input: Input) {
+    let exchange_map = get_exchange_map(input.symbols);
+    for (exchange_id, symbols) in exchange_map.iter() {
+        oei::ask_external_data(
+            *exchange_id as i64,
+            get_ds_from_exchange(*exchange_id),
+            symbols
+                .iter()
+                .map(|&x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_string()
+                .as_bytes(),
+        )
+    }
+}
+```
+
+In the example implementation, the preparation phase begins by fetching the list of supported exchange/data source for each of the inputted `symbols`. For each data source, it then queries it using the list of symbols, inputted as an adjoined string separated by a space.
+
+For example, if we were to use ``["PRISM","CLUNA","PLUNA","YLUNA"]`` as the input `symbols`, `prepare_impl` will query Data Source #300 we deployed with the input string `"PRISM CLUNA PLUNA YLUNA"`.
+
+
+##### Execution Phase
+
+The execution/aggregation phase then retrieves the values returned by the data sources, do the appropriate aggregation, and returns the final result.
+
+In our example's case, we:
+
+- start by retrieving the prices returned by each data soruce for each of the queried assets (in the case that one asset's price is queried from multiple data soruces)
+- use the list of returned prices for each assets to calculate the median price
+- multiply each asset's median price by the input's `multiplier`
+- return the final output `rates`
+
+```rust=
+#[no_mangle]
+fn execute_impl(input: Input) -> Output {
+    // Get the required exchange and associated tokens to query
+    let exchange_map = get_exchange_map((*input.symbols).to_vec());
+    // store the median price of each token requested from an exchange
+    let mut exchange_medians: Vec<Option<Vec<f64>>> = vec![Some(vec![]); EXCHANGE_COUNT as usize];
+    for (exchange_id, _symbols) in exchange_map.iter() {
+        // Get the data source calldata for a given external ID
+        let raw_input = ext::load_input::<String>(*exchange_id as i64);
+        let mut prices = vec![vec![]; exchange_map[exchange_id].len()];
+        let inputs: Vec<String> = raw_input.collect();
+        if inputs.is_empty() {
+            exchange_medians[*exchange_id as usize] = None;
+            continue;
+        }
+        // for each validator response for the exchange,
+        // split the response into individual prices
+        for raw in inputs {
+            let px_list: Vec<f64> = raw
+                .split(',')
+                .filter_map(|x| x.parse::<f64>().ok())
+                .collect();
+            // for each token price, add it to the list of validator responses
+            // for that token and exchange
+            for (idx, &px) in px_list.iter().enumerate() {
+                prices[idx].push(px);
+            }
+        }
+        let mut median_prices = vec![0f64; prices.len()];
+        for (idx, price) in prices.iter().enumerate() {
+            median_prices[idx] = median(&mut price.to_vec());
+        }
+        exchange_medians[*exchange_id as usize] = Some(median_prices);
+    }
+
+    let mut symbol_pxs = HashMap::new();
+    for (exchange_id, symbols) in exchange_map.iter() {
+        let exchange_median = exchange_medians[*exchange_id as usize].as_ref();
+        if exchange_median.is_none() {
+            continue;
+        }
+        let exchange_median = exchange_median.unwrap();
+        let symbols_vec: Vec<String> = symbols.iter().map(|x| x.to_string()).collect();
+
+        for (symbol_id, symbol) in symbols_vec.iter().enumerate() {
+            match symbol_pxs.entry(symbol.clone()) {
+                Entry::Vacant(e) => {
+                    e.insert(vec![exchange_median[symbol_id]]);
+                }
+                Entry::Occupied(mut e) => {
+                    e.get_mut().push(exchange_median[symbol_id]);
+                }
+            }
+        }
+    }
+
+    let mut rates = Vec::new();
+    for symbol in input.symbols.iter() {
+        rates.push((median(symbol_pxs.get_mut(symbol).unwrap()) * (input.multiplier as f64)) as u64)
+    }
+    Output { rates }
+}
+```
+
+#### Deploying Oracle Scripts
+
+Once we have the full oracle script, we then need to compile it. This can be done by navigating to the oracle script's directory and running
+
+```shell=
+RUSTFLAGS='-C link-arg=-s' cargo build --release --target wasm32-unknown-unknown
+```
+
+This will then create a `wasm` file in `target/wasm32-unknown-unknown/release/`.
+
+To then deploy the script, run the following command
+
+
+```shell
+bandd tx oracle create-oracle-script \
+    --name "Prismswap Price" \
+    --description "Return the spot price for assets on Prismswap" \
+    --schema "{symbol:[string],multiplier:u64}/{rates:[u64]}" \
+    --script "./target/wasm32-unknown-unknown/release/prismswap_asset_price.wasm" \
+    --from band_oracle_demo \
+    --owner band1atlvlj6t2xv5frt8z7s6lw9ygar4zf2jm4vhgq \
+    --node http://rpc-laozi-testnet4.bandchain.org:26657 \
+    --chain-id band-laozi-testnet4 \
+    --gas 2000000
+```
+
+The variables are:
+
+- name: Desired name of the oracle script on BandChain
+- description: Short description of the oracle script
+- schema: The oracle script's input/output schema
+- script: path to the compiled oracle script's wasm file
+- owner: Address of the owner of the oracle script. This address will be able to make changes and update the script once deployed
+- node: BandChain RPC node to send the data source creation script to
+
+```shell=
+confirm transaction before signing and broadcasting [y/N]: y
+code: 0
+codespace: ""
+data: ""
+gas_used: "0"
+gas_wanted: "0"
+height: "0"
+info: ""
+logs: []
+raw_log: '[]'
+timestamp: ""
+tx: null
+txhash: CE61C7B588D89254F710B9347147F2DE86389946F5F2D8D6AAFFB5B86B11F4EA
+```
+
+Again, once you've confirmed the transaction, you'll get back the transaction's `txhash`. Copy that and use that query on https://laozi-testnet4.cosmoscan.io and find the deployed oracle script's ID.
+
+![](https://i.imgur.com/4geUaRL.png)
+
+If you then click on the Oracle Script ID and navigate to the script's page you can try sending a request to the oracle script and observe the response. Note that you'll need to connect your wallet to Cosmoscan to be able to do so
+![](https://i.imgur.com/hJ4YsKj.png)
+
+If the request is successful, you should see the expected resultsi n the **Output** row. In our case the prices has been multiplied by the `multiplier` we set as 1 million.
+
+![](https://i.imgur.com/tcXjESo.png)
